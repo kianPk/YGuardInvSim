@@ -13,22 +13,29 @@ namespace YGuardInvSim;
 public class YGuardInvSimPlugin : BasePlugin
 {
     public override string ModuleName => "YGuard InvSim";
-    public override string ModuleVersion => "1.1.1";
+    public override string ModuleVersion => "1.1.2";
     public override string ModuleAuthor => "YGuard";
     public override string ModuleDescription =>
         "Sets invsim_url / require_inventory / ws flags on every boot";
 
     private const string InventoryUrl = "https://inventory.yguard.ir";
     private bool _appliedThisMap;
+    private bool _loggedKeyOk;
 
     public override void Load(bool hotReload)
     {
         Apply(log: true);
-        AddTimer(3.0f, () => Apply(log: true));
+        // Key file is sometimes merged a moment after CSS starts â€” retry.
+        foreach (var delay in new[] { 1.0f, 3.0f, 8.0f, 15.0f, 30.0f })
+        {
+            var d = delay;
+            AddTimer(d, () => Apply(log: true));
+        }
         RegisterListener<Listeners.OnMapStart>(_ =>
         {
             _appliedThisMap = false;
             AddTimer(2.0f, () => Apply(log: true));
+            AddTimer(8.0f, () => Apply(log: false));
         });
         Logger.LogInformation("YGuardInvSim loaded â€” target invsim_url={Url}", InventoryUrl);
     }
@@ -38,7 +45,6 @@ public class YGuardInvSimPlugin : BasePlugin
         try
         {
             Server.ExecuteCommand($"invsim_url \"{InventoryUrl}\"");
-            // Required so GiveNamedItem detour paints weapons at spawn time.
             Server.ExecuteCommand("invsim_require_inventory 1");
             Server.ExecuteCommand("invsim_ws_enabled 1");
             Server.ExecuteCommand("invsim_ws_immediately 1");
@@ -48,16 +54,26 @@ public class YGuardInvSimPlugin : BasePlugin
             if (!string.IsNullOrWhiteSpace(apiKey))
             {
                 Server.ExecuteCommand($"invsim_apikey \"{apiKey}\"");
+                if (!_loggedKeyOk)
+                {
+                    _loggedKeyOk = true;
+                    Logger.LogInformation(
+                        "YGuardInvSim applied invsim_url={Url} apikey=true",
+                        InventoryUrl
+                    );
+                }
+            }
+            else if (log && !_appliedThisMap)
+            {
+                Logger.LogWarning(
+                    "YGuardInvSim applied invsim_url={Url} apikey=false (key file not found yet)",
+                    InventoryUrl
+                );
             }
 
-            if (log && !_appliedThisMap)
+            if (log)
             {
                 _appliedThisMap = true;
-                Logger.LogInformation(
-                    "YGuardInvSim applied invsim_url={Url} apikey={HasKey}",
-                    InventoryUrl,
-                    !string.IsNullOrWhiteSpace(apiKey)
-                );
             }
         }
         catch (Exception ex)
@@ -66,11 +82,6 @@ public class YGuardInvSimPlugin : BasePlugin
         }
     }
 
-    /// <summary>
-    /// Dedicated pods merge custom-plugins/addons into /opt/instance, but do NOT
-    /// expose /opt/5stack/custom-plugins/invsim_apikey. Prefer the key next to
-    /// this DLL (gets copied into the instance), then fall back to the host path.
-    /// </summary>
     private string? ReadApiKey()
     {
         foreach (var path in new[]
