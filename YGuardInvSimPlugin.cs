@@ -13,7 +13,7 @@ namespace YGuardInvSim;
 public class YGuardInvSimPlugin : BasePlugin
 {
     public override string ModuleName => "YGuard InvSim";
-    public override string ModuleVersion => "1.1.0";
+    public override string ModuleVersion => "1.1.1";
     public override string ModuleAuthor => "YGuard";
     public override string ModuleDescription =>
         "Sets invsim_url / require_inventory / ws flags on every boot";
@@ -67,25 +67,36 @@ public class YGuardInvSimPlugin : BasePlugin
     }
 
     /// <summary>
-    /// Optional key file (not wiped with /opt/instance):
-    ///   /opt/5stack/custom-plugins/invsim_apikey
-    /// one line, the inv_â€¦ key from Inventory Admin â†’ Server key.
+    /// Dedicated pods merge custom-plugins/addons into /opt/instance, but do NOT
+    /// expose /opt/5stack/custom-plugins/invsim_apikey. Prefer the key next to
+    /// this DLL (gets copied into the instance), then fall back to the host path.
     /// </summary>
-    private static string? ReadApiKey()
+    private string? ReadApiKey()
     {
-        try
+        foreach (var path in new[]
         {
-            const string path = "/opt/5stack/custom-plugins/invsim_apikey";
-            if (!File.Exists(path))
+            Path.Combine(ModuleDirectory, "invsim_apikey"),
+            "/opt/instance/game/csgo/addons/counterstrikesharp/plugins/YGuardInvSim/invsim_apikey",
+            "/opt/5stack/custom-plugins/invsim_apikey",
+        })
+        {
+            try
             {
-                return null;
+                if (!File.Exists(path))
+                {
+                    continue;
+                }
+                var key = File.ReadAllText(path).Trim();
+                if (!string.IsNullOrWhiteSpace(key))
+                {
+                    return key;
+                }
             }
-            var key = File.ReadAllText(path).Trim();
-            return string.IsNullOrWhiteSpace(key) ? null : key;
+            catch
+            {
+                // try next
+            }
         }
-        catch
-        {
-            return null;
-        }
+        return null;
     }
 }
